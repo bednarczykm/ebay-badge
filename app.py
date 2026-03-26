@@ -1,5 +1,5 @@
 """
-EuroFrance eBay Trust Badge - Render.com (v7 - smaller percent, compact 250x130)
+EuroFrance eBay Trust Badge - Render.com (v8 - compact 250x100)
 """
 import io, re, time, os
 from threading import Lock
@@ -159,13 +159,13 @@ def text_right(d, font_path, size, x, cy, text, color):
     d.text((x - tw, cy - th/2), text, fill=color, font=font)
 
 # ============================================================
-# BADGE DRAWING
+# BADGE DRAWING - 250x100 compact
 # ============================================================
 def draw_badge(data, width=250, locale='fr'):
     scale = 2
     s = scale
     W = 500 * s
-    H = 260 * s
+    H = 200 * s
     img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
@@ -175,7 +175,7 @@ def draw_badge(data, width=250, locale='fr'):
     BORDER = (210, 210, 210)
 
     # Border
-    d.rounded_rectangle([0, 0, W-1, H-1], radius=16*s, fill=None, outline=BORDER, width=2*s)
+    d.rounded_rectangle([0, 0, W-1, H-1], radius=14*s, fill=None, outline=BORDER, width=2*s)
 
     # Navy accent bar left
     bar_w = 10 * s
@@ -185,33 +185,33 @@ def draw_badge(data, width=250, locale='fr'):
     left_x = 28 * s
 
     # eBay logo + seller
-    font_ebay = ImageFont.truetype(FONT_BOLD, 30 * s)
+    font_ebay = ImageFont.truetype(FONT_BOLD, 26 * s)
     x = left_x
     for letter, col in [('e',(229,50,56)), ('b',(0,100,210)), ('a',(245,175,2)), ('y',(134,184,23))]:
-        d.text((x, 16*s), letter, fill=col, font=font_ebay)
+        d.text((x, 10*s), letter, fill=col, font=font_ebay)
         x += font_ebay.getbbox(letter)[2] - font_ebay.getbbox(letter)[0]
-    text_left(d, FONT_BOLD, 22*s, x + 10*s, 30*s, data['seller'], NAVY)
+    text_left(d, FONT_BOLD, 19*s, x + 8*s, 22*s, data['seller'], NAVY)
 
     # Horizontal separator
-    d.line([(left_x, 60*s), (W - 28*s, 60*s)], fill=BORDER, width=2*s)
+    d.line([(left_x, 46*s), (W - 28*s, 46*s)], fill=BORDER, width=2*s)
 
-    # Big percentage (30% smaller: 88 → 62)
+    # Big percentage
     percent_text = f"{data['percent']}%"
-    text_centered(d, FONT_BOLD, 48*s, W//2, 118*s, percent_text, NAVY)
+    text_centered(d, FONT_BOLD, 44*s, W//2, 88*s, percent_text, NAVY)
 
     # Stars left, score right
-    text_left(d, FONT_REG, 24*s, left_x, 192*s,
+    text_left(d, FONT_REG, 20*s, left_x, 148*s,
               '\u2605' * data['stars'] + '\u2606' * (5 - data['stars']), GOLD_STAR)
     score_text = f"{data['score']:,}".replace(',', '.') + ' ' + REVIEWS_WORD.get(locale, 'avis')
-    text_right(d, FONT_BOLD, 18*s, W - 28*s, 192*s, score_text, GRAY_TEXT)
+    text_right(d, FONT_BOLD, 15*s, W - 28*s, 148*s, score_text, GRAY_TEXT)
 
     # Label
     label = LABEL_TEXTS.get(locale, LABEL_TEXTS['fr'])
-    text_centered(d, FONT_BOLD, 15*s, W//2, 228*s, label, GRAY_TEXT)
+    text_centered(d, FONT_BOLD, 13*s, W//2, 178*s, label, GRAY_TEXT)
 
     # Downscale
     final_w = width
-    final_h = int(width * 260 / 500)
+    final_h = int(width * 200 / 500)
     return img.resize((final_w, final_h), Image.LANCZOS)
 
 # ============================================================
@@ -254,7 +254,7 @@ def badge(seller_id):
 @app.route('/')
 def index():
     return '''<html><body style="background:#f0f0f0; padding:40px; font-family:Arial;">
-    <h1>EuroFrance Trust Badge</h1>
+    <h1>EuroFrance Trust Badge v8</h1>
     <p>Usage: <code>/badge/{seller_id}?locale=fr</code></p>
     <p>Params: <code>?locale=fr|de|it|es|uk|us|nl|be</code> · <code>?width=250</code> · <code>?debug</code></p>
     <h3>FR:</h3>
