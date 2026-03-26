@@ -197,7 +197,7 @@ def draw_badge(data, width=250, locale='fr'):
 
     # Big percentage (30% smaller: 88 → 62)
     percent_text = f"{data['percent']}%"
-    text_centered(d, FONT_BOLD, 62*s, W//2, 118*s, percent_text, NAVY)
+    text_centered(d, FONT_BOLD, 48*s, W//2, 118*s, percent_text, NAVY)
 
     # Stars left, score right
     text_left(d, FONT_REG, 24*s, left_x, 192*s,
