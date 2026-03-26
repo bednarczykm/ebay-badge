@@ -1,13 +1,37 @@
 """
-EuroFrance eBay Trust Badge - Render.com (v3 - rectangular)
+EuroFrance eBay Trust Badge - Render.com (v6 - manual config + scraping fallback)
+
+DANE AKTUALIZUJESZ TUTAJ (sekcja SELLER_DATA poniżej).
+Zmień liczby, commituj na GitHub, Render auto-deployuje.
 """
-import io, re, time, math, os
+import io, re, time, os
 from threading import Lock
 from flask import Flask, Response, request
 from PIL import Image, ImageDraw, ImageFont
 import requests as http_requests
 
 app = Flask(__name__)
+
+# ============================================================
+# ★★★ TWOJE DANE — EDYTUJ TUTAJ ★★★
+# Aby zaktualizować: zmień liczby → commit na GitHub → Render auto-deploy
+# ============================================================
+SELLER_DATA = {
+    'eurofrance1': {
+        'fr': {'score': 20585, 'percent': '98,5', 'stars': 4},
+        'de': {'score': 20585, 'percent': '98,5', 'stars': 4},
+        'it': {'score': 20585, 'percent': '98,5', 'stars': 4},
+        'es': {'score': 20585, 'percent': '98,5', 'stars': 4},
+        'uk': {'score': 20585, 'percent': '98,5', 'stars': 4},
+        'us': {'score': 20585, 'percent': '98,5', 'stars': 4},
+        'nl': {'score': 20585, 'percent': '98,5', 'stars': 4},
+        'be': {'score': 20585, 'percent': '98,5', 'stars': 4},
+    },
+    # Dodaj więcej sellerów jeśli potrzebujesz:
+    # 'inny_seller': {
+    #     'fr': {'score': 1000, 'percent': '99,0', 'stars': 5},
+    # },
+}
 
 # ============================================================
 # CACHE
@@ -29,7 +53,7 @@ def set_cached(key, data):
         cache[key] = (data, time.time())
 
 # ============================================================
-# EBAY DATA
+# EBAY SCRAPING (próba — fallback do SELLER_DATA)
 # ============================================================
 EBAY_URLS = {
     'fr': 'https://www.ebay.fr/fdbk/feedback_profile/{}',
@@ -42,7 +66,7 @@ EBAY_URLS = {
     'be': 'https://www.ebay.be/fdbk/feedback_profile/{}',
 }
 
-RIBBON_TEXTS = {
+LABEL_TEXTS = {
     'fr': 'FEEDBACK POSITIF', 'de': 'POSITIVES FEEDBACK',
     'it': 'FEEDBACK POSITIVO', 'es': 'FEEDBACK POSITIVO',
     'uk': 'POSITIVE FEEDBACK', 'us': 'POSITIVE FEEDBACK',
@@ -60,37 +84,63 @@ HEADERS = {
     'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
 }
 
-def fetch_feedback(seller, locale='fr'):
+
+def try_scrape(seller, locale='fr'):
+    """Próbuje pobrać dane z eBay. Zwraca None jeśli nie uda się."""
+    url = EBAY_URLS.get(locale, EBAY_URLS['fr']).format(seller)
+    try:
+        resp = http_requests.get(url, headers=HEADERS, timeout=10)
+        resp.raise_for_status()
+        text = resp.text
+        
+        score = 0
+        percent = '0'
+        
+        # Score
+        if m := re.search(re.escape(seller) + r'\s*\((\d[\d\s,.]*)', text, re.I):
+            score = int(re.sub(r'[\s.,]', '', m.group(1)))
+        elif m := re.search(r'(\d[\d\s,.]*)\s*(?:Feedback|évaluation|Bewertung|valutazion)', text, re.I):
+            score = int(re.sub(r'[\s.,]', '', m.group(1)))
+        
+        # Percent
+        if m := re.search(r'([\d][,.\d]*)\s*%\s*(?:positive|positif|positiv|positivo|positief)', text, re.I):
+            percent = m.group(1).replace('.', ',')
+        
+        # Tylko zwróć jeśli score > 0 (czyli naprawdę znaleźliśmy dane)
+        if score > 0:
+            pct = float(percent.replace(',', '.'))
+            stars = 5 if pct >= 99 else 4 if pct >= 97 else 3 if pct >= 95 else 2 if pct >= 90 else 1
+            return {'score': score, 'percent': percent, 'stars': stars}
+    except:
+        pass
+    return None
+
+
+def get_data(seller, locale='fr'):
+    """Pobiera dane: 1) cache, 2) URL params, 3) scraping, 4) SELLER_DATA config."""
     cache_key = f"{seller}:{locale}"
     cached = get_cached(cache_key)
     if cached:
         return cached
 
-    url = EBAY_URLS.get(locale, EBAY_URLS['fr']).format(seller)
-    data = {'seller': seller, 'score': 0, 'percent': '0', 'stars': 5}
+    # Próba 1: Scraping z eBay
+    scraped = try_scrape(seller, locale)
+    if scraped:
+        data = {'seller': seller, 'source': 'ebay', **scraped}
+        set_cached(cache_key, data)
+        return data
 
-    try:
-        resp = http_requests.get(url, headers=HEADERS, timeout=10)
-        resp.raise_for_status()
-        text = resp.text
+    # Próba 2: Dane z konfiguracji SELLER_DATA
+    if seller in SELLER_DATA:
+        config = SELLER_DATA[seller].get(locale, SELLER_DATA[seller].get('fr', {}))
+        if config:
+            data = {'seller': seller, 'source': 'config', **config}
+            set_cached(cache_key, data)
+            return data
 
-        if m := re.search(re.escape(seller) + r'\s*\((\d[\d\s,.]*)', text, re.I):
-            data['score'] = int(re.sub(r'[\s.,]', '', m.group(1)))
-        elif m := re.search(r'(\d[\d\s,.]*)\s*(?:Feedback|évaluation|Bewertung|valutazion)', text, re.I):
-            data['score'] = int(re.sub(r'[\s.,]', '', m.group(1)))
+    # Fallback
+    return {'seller': seller, 'source': 'fallback', 'score': 0, 'percent': '0', 'stars': 0}
 
-        if m := re.search(r'([\d][,.\d]*)\s*%\s*(?:positive|positif|positiv|positivo|positief)', text, re.I):
-            data['percent'] = m.group(1).replace('.', ',')
-        elif m := re.search(r'([\d][,.\d]*)\s*%', text, re.I):
-            data['percent'] = m.group(1).replace('.', ',')
-
-        pct = float(data['percent'].replace(',', '.'))
-        data['stars'] = 5 if pct >= 99 else 4 if pct >= 97 else 3 if pct >= 95 else 2 if pct >= 90 else 1
-    except:
-        pass
-
-    set_cached(cache_key, data)
-    return data
 
 # ============================================================
 # FONTS
@@ -109,6 +159,13 @@ FONT_REG = next((p for p in FONT_PATHS_REG if os.path.exists(p)), FONT_BOLD)
 # ============================================================
 # DRAWING HELPERS
 # ============================================================
+def text_centered(d, font_path, size, cx, cy, text, color):
+    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+    bbox = d.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    d.text((cx - tw/2, cy - th/2), text, fill=color, font=font)
+    return tw, th
+
 def text_left(d, font_path, size, x, cy, text, color):
     font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
     bbox = d.textbbox((0, 0), text, font=font)
@@ -124,74 +181,61 @@ def text_right(d, font_path, size, x, cy, text, color):
     return tw, th
 
 # ============================================================
-# BADGE DRAWING - Rectangular Concept A
+# BADGE DRAWING - Compact transparent
 # ============================================================
-def draw_badge(data, width=700, locale='fr'):
-    # Render at 2x for sharpness
-    W = width * 2
-    H = int(W * 200 / 700)  # aspect ratio 700:200
+def draw_badge(data, width=250, locale='fr'):
+    scale = 2
+    W = 500 * scale
+    H = 260 * scale
     img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
+    s = scale
 
-    # Colors
-    GOLD = (245, 212, 66)
-    WHITE = (255, 255, 255)
-    GRAY = (140, 140, 140)
-    BG = (26, 26, 26)
-    SEP = (60, 60, 60)
+    NAVY = (43, 45, 66)
+    GRAY_TEXT = (120, 120, 120)
+    GOLD_STAR = (245, 185, 0)
+    BORDER = (210, 210, 210)
 
-    # Background
-    d.rounded_rectangle([0, 0, W-1, H-1], radius=28, fill=BG)
+    # Border
+    d.rounded_rectangle([0, 0, W-1, H-1], radius=16*s, fill=None, outline=BORDER, width=2*s)
 
-    # Gold accent bar (left)
-    d.rounded_rectangle([0, 0, 20, H-1], radius=14, fill=GOLD)
-    d.rectangle([10, 0, 20, H-1], fill=GOLD)
+    # Navy accent bar left
+    bar_w = 10 * s
+    d.rounded_rectangle([0, 0, bar_w, H-1], radius=5*s, fill=NAVY)
+    d.rectangle([bar_w//2, 0, bar_w, H-1], fill=NAVY)
 
-    # --- LEFT SIDE ---
-    left_x = 70
+    left_x = 28 * s
 
-    # eBay logo
-    font_ebay = ImageFont.truetype(FONT_BOLD, 76)
+    # Row 1: eBay logo + seller name
+    font_ebay = ImageFont.truetype(FONT_BOLD, 30 * s)
     x = left_x
     for letter, col in [('e',(229,50,56)), ('b',(0,100,210)), ('a',(245,175,2)), ('y',(134,184,23))]:
-        d.text((x, int(H*0.10)), letter, fill=col, font=font_ebay)
+        d.text((x, 16*s), letter, fill=col, font=font_ebay)
         x += font_ebay.getbbox(letter)[2] - font_ebay.getbbox(letter)[0]
 
-    # Seller name
-    text_left(d, FONT_BOLD, 44, left_x, int(H*0.48), data['seller'], WHITE)
+    text_left(d, FONT_BOLD, 22*s, x + 10*s, 30*s, data['seller'], NAVY)
 
-    # Score
-    score_text = f"{data['score']:,}".replace(',', '.') + ' ' + REVIEWS_WORD.get(locale, 'avis')
-    text_left(d, FONT_BOLD, 36, left_x, int(H*0.66), score_text, GOLD)
-
-    # Stars
-    stars = '\u2605' * data['stars'] + '\u2606' * (5 - data['stars'])
-    text_left(d, FONT_REG, 36, left_x, int(H*0.84), stars, GOLD)
-
-    # --- SEPARATOR ---
-    sep_x = int(W * 0.47)
-    d.line([(sep_x, 60), (sep_x, H-60)], fill=SEP, width=3)
-
-    # --- RIGHT SIDE ---
-    right_x = W - 70
+    # Horizontal separator
+    d.line([(left_x, 60*s), (W - 28*s, 60*s)], fill=BORDER, width=2*s)
 
     # Big percentage
     percent_text = f"{data['percent']}%"
-    text_right(d, FONT_BOLD, 164, right_x, int(H*0.42), percent_text, WHITE)
+    text_centered(d, FONT_BOLD, 88*s, W//2, 120*s, percent_text, NAVY)
 
-    # Label
-    label = RIBBON_TEXTS.get(locale, RIBBON_TEXTS['fr'])
-    tw, _ = text_right(d, FONT_BOLD, 26, right_x, int(H*0.74), label, GRAY)
+    # Bottom row: stars left, score right
+    text_left(d, FONT_REG, 24*s, left_x, 196*s, '\u2605' * data['stars'] + '\u2606' * (5 - data['stars']), GOLD_STAR)
 
-    # Gold decorative line under label
-    line_y = int(H * 0.84)
-    d.rounded_rectangle([right_x - tw, line_y, right_x, line_y + 6], radius=3, fill=GOLD)
+    score_text = f"{data['score']:,}".replace(',', '.') + ' ' + REVIEWS_WORD.get(locale, 'avis')
+    text_right(d, FONT_BOLD, 18*s, W - 28*s, 196*s, score_text, GRAY_TEXT)
 
-    # Downscale for sharpness
+    # Label bottom center
+    label = LABEL_TEXTS.get(locale, LABEL_TEXTS['fr'])
+    text_centered(d, FONT_BOLD, 15*s, W//2, 232*s, label, GRAY_TEXT)
+
+    # Downscale
     final_w = width
-    final_h = int(width * 200 / 700)
-    final = img.resize((final_w, final_h), Image.LANCZOS)
-    return final
+    final_h = int(width * 260 / 500)
+    return img.resize((final_w, final_h), Image.LANCZOS)
 
 # ============================================================
 # ROUTES
@@ -200,14 +244,32 @@ def draw_badge(data, width=700, locale='fr'):
 def badge(seller_id):
     seller_id = re.sub(r'[^a-zA-Z0-9._-]', '', seller_id)
     locale = re.sub(r'[^a-z]', '', request.args.get('locale', 'fr'))
-    width = min(max(int(request.args.get('width', 700)), 200), 1400)
+    width = min(max(int(request.args.get('width', 250)), 100), 1000)
+
+    # URL param overrides (opcjonalne)
+    override_score = request.args.get('score')
+    override_percent = request.args.get('percent')
 
     if request.args.get('debug') is not None:
         import json
-        return Response(json.dumps(fetch_feedback(seller_id, locale), indent=2, ensure_ascii=False),
+        data = get_data(seller_id, locale)
+        if override_score:
+            data['score'] = int(override_score)
+        if override_percent:
+            data['percent'] = override_percent
+        return Response(json.dumps(data, indent=2, ensure_ascii=False),
                        mimetype='application/json')
 
-    data = fetch_feedback(seller_id, locale)
+    data = get_data(seller_id, locale)
+    
+    # Override z URL params
+    if override_score:
+        data['score'] = int(override_score)
+    if override_percent:
+        data['percent'] = override_percent
+        pct = float(override_percent.replace(',', '.'))
+        data['stars'] = 5 if pct >= 99 else 4 if pct >= 97 else 3 if pct >= 95 else 2 if pct >= 90 else 1
+
     img = draw_badge(data, width, locale)
     buf = io.BytesIO()
     img.save(buf, format='PNG', optimize=True)
@@ -217,14 +279,39 @@ def badge(seller_id):
 
 @app.route('/')
 def index():
-    return '''<h1>EuroFrance Badge</h1>
-    <p>Usage: /badge/eurofrance1</p>
-    <p>Params: ?locale=fr|de|it|es|uk|us|nl|be &amp; ?width=700 &amp; ?debug</p>
-    <h3>French:</h3>
-    <img src="/badge/eurofrance1" width="350">
-    <h3>German:</h3>
-    <img src="/badge/eurofrance1?locale=de" width="350">
-    '''
+    return '''<html><body style="background:#f0f0f0; padding:40px; font-family:Arial;">
+    <h1>EuroFrance Trust Badge</h1>
+    
+    <h2>Użycie</h2>
+    <p><code>/badge/{seller_id}?locale=fr</code></p>
+    
+    <h2>Parametry</h2>
+    <ul>
+        <li><b>locale</b> = fr, de, it, es, uk, us, nl, be</li>
+        <li><b>width</b> = szerokość w px (domyślnie 250)</li>
+        <li><b>score</b> = override liczby opinii</li>
+        <li><b>percent</b> = override procentu</li>
+        <li><b>debug</b> = pokaż dane JSON</li>
+    </ul>
+    
+    <h2>Podgląd</h2>
+    <h3>FR:</h3>
+    <div style="background:white; display:inline-block; padding:20px; border-radius:8px;">
+        <img src="/badge/eurofrance1?locale=fr">
+    </div>
+    <h3>DE:</h3>
+    <div style="background:white; display:inline-block; padding:20px; border-radius:8px;">
+        <img src="/badge/eurofrance1?locale=de">
+    </div>
+    <h3>IT:</h3>
+    <div style="background:white; display:inline-block; padding:20px; border-radius:8px;">
+        <img src="/badge/eurofrance1?locale=it">
+    </div>
+    <h3>ES:</h3>
+    <div style="background:white; display:inline-block; padding:20px; border-radius:8px;">
+        <img src="/badge/eurofrance1?locale=es">
+    </div>
+    </body></html>'''
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
