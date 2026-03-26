@@ -1,5 +1,5 @@
 """
-EuroFrance eBay Trust Badge - Render.com
+EuroFrance eBay Trust Badge - Render.com (v2 - improved readability)
 """
 import io, re, time, math, os
 from threading import Lock
@@ -88,7 +88,7 @@ def fetch_feedback(seller, locale='fr'):
     return data
 
 # ============================================================
-# BADGE DRAWING
+# BADGE DRAWING (v2 - improved layout)
 # ============================================================
 FONT_PATHS = [
     os.path.join(os.path.dirname(__file__), 'DejaVuSans-Bold.ttf'),
@@ -96,11 +96,19 @@ FONT_PATHS = [
 ]
 FONT_PATH = next((p for p in FONT_PATHS if os.path.exists(p)), None)
 
-def text_centered(draw, font_size, cx, cy, text, color):
-    font = ImageFont.truetype(FONT_PATH, font_size) if FONT_PATH else ImageFont.load_default()
+# Also look for regular weight
+FONT_REG_PATHS = [
+    os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf'),
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+]
+FONT_REG_PATH = next((p for p in FONT_REG_PATHS if os.path.exists(p)), FONT_PATH)
+
+def text_centered(draw, font_path, font_size, cx, cy, text, color):
+    font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     draw.text((cx - tw/2, cy - th/2), text, fill=color, font=font)
+    return tw, th
 
 def draw_badge(data, size=460, ribbon_text='VENDEUR DE CONFIANCE'):
     S = size * 2
@@ -112,6 +120,7 @@ def draw_badge(data, size=460, ribbon_text='VENDEUR DE CONFIANCE'):
     GL, GM, GD = (245,212,66), (200,150,12), (166,124,0)
     DBG, DDBG = (26,26,26), (17,17,17)
     W, LG = (255,255,255), (224,224,224)
+    SCORE_COLOR = (255, 220, 100)  # jasny złoty dla liczby opinii
 
     # Ribbons behind badge
     for rx in [cx - int(S*0.22), cx + int(S*0.22)]:
@@ -142,34 +151,36 @@ def draw_badge(data, size=460, ribbon_text='VENDEUR DE CONFIANCE'):
         letters = [('e',(229,50,56)), ('b',(0,100,210)), ('a',(245,175,2)), ('y',(134,184,23))]
         widths = [font.getbbox(l)[2] - font.getbbox(l)[0] for l,_ in letters]
         x = cx - sum(widths)//2
-        ey = cy - int(S*0.22)
+        ey = cy - int(S*0.24)
         for i, (letter, col) in enumerate(letters):
-            bbox = font.getbbox(letter)
             d.text((x, ey), letter, fill=col, font=font)
             x += widths[i]
 
-    # Seller + score
-    seller_text = f"{data['seller']} ({data['score']:,}★)".replace(',', '.')
-    text_centered(d, S//22, cx, cy - int(S*0.09), seller_text, LG)
+    # --- SELLER NAME (osobna linia, biały, wyraźny) ---
+    text_centered(d, FONT_PATH, S//18, cx, cy - int(S*0.135), data['seller'], W)
 
-    # Percent
-    text_centered(d, S//7, cx, cy + int(S*0.02), f"{data['percent']}%", W)
+    # --- SCORE (osobna linia, większy, złoty, wyraźny) ---
+    score_formatted = f"{data['score']:,}".replace(',', '.') + ' ★'
+    text_centered(d, FONT_PATH, S//16, cx, cy - int(S*0.075), score_formatted, SCORE_COLOR)
 
-    # Stars
+    # --- Percent (główny element) ---
+    text_centered(d, FONT_PATH, S//7, cx, cy + int(S*0.04), f"{data['percent']}%", W)
+
+    # --- Stars ---
     stars = '★' * data['stars'] + '☆' * (5 - data['stars'])
-    text_centered(d, S//14, cx, cy + int(S*0.14), stars, GL)
+    text_centered(d, FONT_PATH, S//14, cx, cy + int(S*0.15), stars, GL)
 
-    # FEEDBACK label
+    # --- FEEDBACK label ---
     if FONT_PATH:
-        fs = S//12
+        fs = S//13
         font = ImageFont.truetype(FONT_PATH, fs)
         bbox = font.getbbox('FEEDBACK')
         tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-        fy = cy + int(S*0.24)
+        fy = cy + int(S*0.25)
         d.rounded_rectangle([cx-tw//2-20, fy-th//2-10, cx+tw//2+20, fy+th//2+10], radius=8, fill=(40,35,10))
-        text_centered(d, fs, cx, fy, 'FEEDBACK', GL)
+        text_centered(d, FONT_PATH, fs, cx, fy, 'FEEDBACK', GL)
 
-    # Bottom ribbon
+    # --- Bottom ribbon ---
     if FONT_PATH:
         fs = S//24
         font = ImageFont.truetype(FONT_PATH, fs)
@@ -177,7 +188,7 @@ def draw_badge(data, size=460, ribbon_text='VENDEUR DE CONFIANCE'):
         tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
         ry = cy + int(S*0.38)
         d.rounded_rectangle([cx-tw//2-30, ry-th//2-10, cx+tw//2+30, ry+th//2+10], radius=6, fill=GL)
-        text_centered(d, fs, cx, ry, ribbon_text, DBG)
+        text_centered(d, FONT_PATH, fs, cx, ry, ribbon_text, DBG)
 
     # Downscale
     return img.resize((size, size), Image.LANCZOS)
@@ -192,7 +203,7 @@ def badge(seller_id):
     size = min(max(int(request.args.get('size', 460)), 100), 1000)
     ribbon = request.args.get('ribbon', RIBBON_TEXTS.get(locale, RIBBON_TEXTS['fr']))
 
-    if request.args.get('debug'):
+    if request.args.get('debug') is not None:
         import json
         return Response(json.dumps(fetch_feedback(seller_id, locale), indent=2, ensure_ascii=False),
                        mimetype='application/json')
