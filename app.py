@@ -1,12 +1,11 @@
 """
-EuroFrance eBay Trust Badge - Render.com (v2 - improved readability)
+EuroFrance eBay Trust Badge - Render.com (v3 - rectangular)
 """
 import io, re, time, math, os
 from threading import Lock
 from flask import Flask, Response, request
 from PIL import Image, ImageDraw, ImageFont
 import requests as http_requests
-from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
@@ -44,10 +43,16 @@ EBAY_URLS = {
 }
 
 RIBBON_TEXTS = {
-    'fr': 'VENDEUR DE CONFIANCE', 'de': 'VERTRAUENSWÜRDIGER VERKÄUFER',
-    'it': 'VENDITORE AFFIDABILE', 'es': 'VENDEDOR DE CONFIANZA',
-    'uk': 'TRUSTED SELLER', 'us': 'TRUSTED SELLER',
-    'nl': 'BETROUWBARE VERKOPER', 'be': 'VENDEUR DE CONFIANCE',
+    'fr': 'FEEDBACK POSITIF', 'de': 'POSITIVES FEEDBACK',
+    'it': 'FEEDBACK POSITIVO', 'es': 'FEEDBACK POSITIVO',
+    'uk': 'POSITIVE FEEDBACK', 'us': 'POSITIVE FEEDBACK',
+    'nl': 'POSITIEVE FEEDBACK', 'be': 'FEEDBACK POSITIF',
+}
+
+REVIEWS_WORD = {
+    'fr': 'avis', 'de': 'Bewertungen', 'it': 'valutazioni',
+    'es': 'opiniones', 'uk': 'reviews', 'us': 'reviews',
+    'nl': 'beoordelingen', 'be': 'avis',
 }
 
 HEADERS = {
@@ -88,110 +93,105 @@ def fetch_feedback(seller, locale='fr'):
     return data
 
 # ============================================================
-# BADGE DRAWING (v2 - improved layout)
+# FONTS
 # ============================================================
-FONT_PATHS = [
+FONT_PATHS_BOLD = [
     os.path.join(os.path.dirname(__file__), 'DejaVuSans-Bold.ttf'),
     '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
 ]
-FONT_PATH = next((p for p in FONT_PATHS if os.path.exists(p)), None)
-
-# Also look for regular weight
-FONT_REG_PATHS = [
+FONT_PATHS_REG = [
     os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf'),
     '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
 ]
-FONT_REG_PATH = next((p for p in FONT_REG_PATHS if os.path.exists(p)), FONT_PATH)
+FONT_BOLD = next((p for p in FONT_PATHS_BOLD if os.path.exists(p)), None)
+FONT_REG = next((p for p in FONT_PATHS_REG if os.path.exists(p)), FONT_BOLD)
 
-def text_centered(draw, font_path, font_size, cx, cy, text, color):
-    font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text((cx - tw/2, cy - th/2), text, fill=color, font=font)
+# ============================================================
+# DRAWING HELPERS
+# ============================================================
+def text_left(d, font_path, size, x, cy, text, color):
+    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+    bbox = d.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    d.text((x, cy - th/2), text, fill=color, font=font)
     return tw, th
 
-def draw_badge(data, size=460, ribbon_text='VENDEUR DE CONFIANCE'):
-    S = size * 2
-    cx = cy = S // 2
-    img = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+def text_right(d, font_path, size, x, cy, text, color):
+    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+    bbox = d.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    d.text((x - tw, cy - th/2), text, fill=color, font=font)
+    return tw, th
+
+# ============================================================
+# BADGE DRAWING - Rectangular Concept A
+# ============================================================
+def draw_badge(data, width=700, locale='fr'):
+    # Render at 2x for sharpness
+    W = width * 2
+    H = int(W * 200 / 700)  # aspect ratio 700:200
+    img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
     # Colors
-    GL, GM, GD = (245,212,66), (200,150,12), (166,124,0)
-    DBG, DDBG = (26,26,26), (17,17,17)
-    W, LG = (255,255,255), (224,224,224)
-    SCORE_COLOR = (255, 220, 100)  # jasny złoty dla liczby opinii
+    GOLD = (245, 212, 66)
+    WHITE = (255, 255, 255)
+    GRAY = (140, 140, 140)
+    BG = (26, 26, 26)
+    SEP = (60, 60, 60)
 
-    # Ribbons behind badge
-    for rx in [cx - int(S*0.22), cx + int(S*0.22)]:
-        ry = int(cy + S*0.38)
-        rw, rh = int(S*0.12), int(S*0.12)
-        d.polygon([(rx-rw, ry-rh//3), (rx+rw, ry-rh//3), (rx+rw//2, ry+rh), (rx, int(ry+rh*0.6)), (rx-rw//2, ry+rh)], fill=GD)
+    # Background
+    d.rounded_rectangle([0, 0, W-1, H-1], radius=28, fill=BG)
 
-    # Serrated outer ring
-    outer_r, bumps, depth = S*0.44, 28, S*0.035
-    for dd, col in [(depth+4, GD), (depth, GM), (depth-3, GL)]:
-        pts = []
-        for i in range(bumps*2):
-            a = (2*math.pi*i)/(bumps*2) - math.pi/2
-            r = outer_r + dd if i%2==0 else outer_r - dd + depth
-            pts.append((int(cx + r*math.cos(a)), int(cy + r*math.sin(a))))
-        d.polygon(pts, fill=col)
+    # Gold accent bar (left)
+    d.rounded_rectangle([0, 0, 20, H-1], radius=14, fill=GOLD)
+    d.rectangle([10, 0, 20, H-1], fill=GOLD)
 
-    # Inner rings
-    for r, c in [(0.40, GM), (0.37, GD), (0.35, DBG), (0.30, DDBG)]:
-        ri = int(S*r)
-        d.ellipse([cx-ri, cy-ri, cx+ri, cy+ri], fill=c)
-    d.ellipse([cx-int(S*0.28), cy-int(S*0.32), cx+int(S*0.28), cy-int(S*0.06)], fill=(30,30,30))
+    # --- LEFT SIDE ---
+    left_x = 70
 
     # eBay logo
-    if FONT_PATH:
-        fs = S//10
-        font = ImageFont.truetype(FONT_PATH, fs)
-        letters = [('e',(229,50,56)), ('b',(0,100,210)), ('a',(245,175,2)), ('y',(134,184,23))]
-        widths = [font.getbbox(l)[2] - font.getbbox(l)[0] for l,_ in letters]
-        x = cx - sum(widths)//2
-        ey = cy - int(S*0.24)
-        for i, (letter, col) in enumerate(letters):
-            d.text((x, ey), letter, fill=col, font=font)
-            x += widths[i]
+    font_ebay = ImageFont.truetype(FONT_BOLD, 76)
+    x = left_x
+    for letter, col in [('e',(229,50,56)), ('b',(0,100,210)), ('a',(245,175,2)), ('y',(134,184,23))]:
+        d.text((x, int(H*0.10)), letter, fill=col, font=font_ebay)
+        x += font_ebay.getbbox(letter)[2] - font_ebay.getbbox(letter)[0]
 
-    # --- SELLER NAME (osobna linia, biały, wyraźny) ---
-    text_centered(d, FONT_PATH, S//18, cx, cy - int(S*0.135), data['seller'], W)
+    # Seller name
+    text_left(d, FONT_BOLD, 44, left_x, int(H*0.48), data['seller'], WHITE)
 
-    # --- SCORE (osobna linia, większy, złoty, wyraźny) ---
-    score_formatted = f"{data['score']:,}".replace(',', '.') + ' ★'
-    text_centered(d, FONT_PATH, S//16, cx, cy - int(S*0.075), score_formatted, SCORE_COLOR)
+    # Score
+    score_text = f"{data['score']:,}".replace(',', '.') + ' ' + REVIEWS_WORD.get(locale, 'avis')
+    text_left(d, FONT_BOLD, 36, left_x, int(H*0.66), score_text, GOLD)
 
-    # --- Percent (główny element) ---
-    text_centered(d, FONT_PATH, S//7, cx, cy + int(S*0.04), f"{data['percent']}%", W)
+    # Stars
+    stars = '\u2605' * data['stars'] + '\u2606' * (5 - data['stars'])
+    text_left(d, FONT_REG, 36, left_x, int(H*0.84), stars, GOLD)
 
-    # --- Stars ---
-    stars = '★' * data['stars'] + '☆' * (5 - data['stars'])
-    text_centered(d, FONT_PATH, S//14, cx, cy + int(S*0.15), stars, GL)
+    # --- SEPARATOR ---
+    sep_x = int(W * 0.47)
+    d.line([(sep_x, 60), (sep_x, H-60)], fill=SEP, width=3)
 
-    # --- FEEDBACK label ---
-    if FONT_PATH:
-        fs = S//13
-        font = ImageFont.truetype(FONT_PATH, fs)
-        bbox = font.getbbox('FEEDBACK')
-        tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-        fy = cy + int(S*0.25)
-        d.rounded_rectangle([cx-tw//2-20, fy-th//2-10, cx+tw//2+20, fy+th//2+10], radius=8, fill=(40,35,10))
-        text_centered(d, FONT_PATH, fs, cx, fy, 'FEEDBACK', GL)
+    # --- RIGHT SIDE ---
+    right_x = W - 70
 
-    # --- Bottom ribbon ---
-    if FONT_PATH:
-        fs = S//24
-        font = ImageFont.truetype(FONT_PATH, fs)
-        bbox = font.getbbox(ribbon_text)
-        tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-        ry = cy + int(S*0.38)
-        d.rounded_rectangle([cx-tw//2-30, ry-th//2-10, cx+tw//2+30, ry+th//2+10], radius=6, fill=GL)
-        text_centered(d, FONT_PATH, fs, cx, ry, ribbon_text, DBG)
+    # Big percentage
+    percent_text = f"{data['percent']}%"
+    text_right(d, FONT_BOLD, 164, right_x, int(H*0.42), percent_text, WHITE)
 
-    # Downscale
-    return img.resize((size, size), Image.LANCZOS)
+    # Label
+    label = RIBBON_TEXTS.get(locale, RIBBON_TEXTS['fr'])
+    tw, _ = text_right(d, FONT_BOLD, 26, right_x, int(H*0.74), label, GRAY)
+
+    # Gold decorative line under label
+    line_y = int(H * 0.84)
+    d.rounded_rectangle([right_x - tw, line_y, right_x, line_y + 6], radius=3, fill=GOLD)
+
+    # Downscale for sharpness
+    final_w = width
+    final_h = int(width * 200 / 700)
+    final = img.resize((final_w, final_h), Image.LANCZOS)
+    return final
 
 # ============================================================
 # ROUTES
@@ -200,8 +200,7 @@ def draw_badge(data, size=460, ribbon_text='VENDEUR DE CONFIANCE'):
 def badge(seller_id):
     seller_id = re.sub(r'[^a-zA-Z0-9._-]', '', seller_id)
     locale = re.sub(r'[^a-z]', '', request.args.get('locale', 'fr'))
-    size = min(max(int(request.args.get('size', 460)), 100), 1000)
-    ribbon = request.args.get('ribbon', RIBBON_TEXTS.get(locale, RIBBON_TEXTS['fr']))
+    width = min(max(int(request.args.get('width', 700)), 200), 1400)
 
     if request.args.get('debug') is not None:
         import json
@@ -209,7 +208,7 @@ def badge(seller_id):
                        mimetype='application/json')
 
     data = fetch_feedback(seller_id, locale)
-    img = draw_badge(data, size, ribbon)
+    img = draw_badge(data, width, locale)
     buf = io.BytesIO()
     img.save(buf, format='PNG', optimize=True)
     buf.seek(0)
@@ -218,7 +217,14 @@ def badge(seller_id):
 
 @app.route('/')
 def index():
-    return '<h1>EuroFrance Badge</h1><p>Usage: /badge/eurofrance1</p><img src="/badge/eurofrance1" width="230">'
+    return '''<h1>EuroFrance Badge</h1>
+    <p>Usage: /badge/eurofrance1</p>
+    <p>Params: ?locale=fr|de|it|es|uk|us|nl|be &amp; ?width=700 &amp; ?debug</p>
+    <h3>French:</h3>
+    <img src="/badge/eurofrance1" width="350">
+    <h3>German:</h3>
+    <img src="/badge/eurofrance1?locale=de" width="350">
+    '''
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
