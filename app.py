@@ -92,7 +92,7 @@ def try_scrape(seller, locale='fr'):
             score = int(re.sub(r'[\s.,]', '', m.group(1)))
         if m := re.search(r'([\d][,.\d]*)\s*%\s*(?:positive|positif|positiv|positivo|positief)', text, re.I):
             percent = m.group(1).replace('.', ',')
-        if score > 0:
+        if score > 0 and percent != '0':
             pct = float(percent.replace(',', '.'))
             stars = 5 if pct >= 99 else 4 if pct >= 97 else 3 if pct >= 95 else 2 if pct >= 90 else 1
             return {'score': score, 'percent': percent, 'stars': stars}
